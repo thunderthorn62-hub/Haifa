@@ -748,9 +748,18 @@ async def transcribe(
     get_user(authorization)
 
     if not GROQ_API_KEY:
-        raise HTTPException(500, "GROQ_API_KEY не настроен")
+        raise HTTPException(
+            500,
+            "GROQ_API_KEY не настроен"
+        )
 
     audio_bytes = await audio.read()
+
+    if not audio_bytes:
+        raise HTTPException(
+            400,
+            "Аудиозапись пустая"
+        )
 
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -766,10 +775,19 @@ async def transcribe(
 
     data = {
         "model": "whisper-large-v3-turbo",
+
+        # Разрешаем только русский язык.
+        # Английский обрабатываем отдельным запросом,
+        # если русский вариант не подходит.
+        "language": "ru",
+
         "response_format": "json",
     }
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(
+        timeout=120
+    ) as client:
+
         response = await client.post(
             "https://api.groq.com/openai/v1/audio/transcriptions",
             headers=headers,
@@ -778,11 +796,22 @@ async def transcribe(
         )
 
     if response.status_code >= 400:
-        raise HTTPException(502, f"Ошибка распознавания речи: {response.text[:500]}")
+        raise HTTPException(
+            502,
+            f"Ошибка распознавания речи: "
+            f"{response.text[:500]}"
+        )
 
     result = response.json()
-    return {"text": result.get("text", "").strip()}
 
+    text = result.get(
+        "text",
+        ""
+    ).strip()
+
+    return {
+        "text": text
+    }
 
 @app.get("/api/me")
 async def me(authorization: Optional[str] = Header(None)):
