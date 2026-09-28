@@ -513,12 +513,17 @@ async def assistant(
                 )
 
             result = response.json()
+            print("CLOUDFLARE RESULT:")
+            print(result if len(str(result)) < 3000 else str(result)[:3000])
 
             image_base64 = (
                 result
                 .get("result", {})
                 .get("image")
             )
+            if not image_base64:
+                print("NO IMAGE IN CLOUDFLARE RESPONSE")
+                raise HTTPException(502, "Cloudflare не вернул изображение")
 
             if not image_base64:
                 print(
