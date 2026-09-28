@@ -293,29 +293,109 @@ def generate_image(prompt: str):
     )
 
 async def parse_command(text: str):
+
     prompt = """
-Ты диспетчер AI-навигации. Определи намерение пользователя.
-Верни ТОЛЬКО корректный JSON без markdown.
+Ты являешься диспетчером AI-помощника.
+
+Определи намерение пользователя.
+
+Верни ТОЛЬКО корректный JSON.
+Без markdown.
+Без пояснений.
 
 Формат:
-{"intent":"route","destination":"Москва","reply":"Короткая фраза на языке пользователя"}
+
+{
+  "intent": "chat",
+  "destination": null,
+  "reply": "Короткий ответ"
+}
 
 Возможные intent:
-- route: пользователь просит построить маршрут до места
-- chat: обычный вопрос или разговор
 
-Если destination отсутствует, используй null.
+1. "route"
+Пользователь хочет построить маршрут,
+доехать или добраться до какого-либо места.
+
+Пример:
+"Проложи маршрут до Хайфы"
+
+Ответ:
+{
+  "intent": "route",
+  "destination": "Хайфа",
+  "reply": "Строю маршрут."
+}
+
+2. "image"
+Пользователь хочет создать, нарисовать
+или сгенерировать изображение.
+
+Примеры:
+"Нарисуй белого тигра"
+"Создай картинку космического города"
+"Сгенерируй изображение машины будущего"
+
+Ответ:
+{
+  "intent": "image",
+  "destination": null,
+  "reply": "Создаю изображение."
+}
+
+3. "chat"
+Любой обычный разговор,
+вопрос или просьба, которая не является
+навигацией или генерацией изображения.
+
+Пример:
+"Как дела?"
+"Расскажи про Финляндию"
+"Что такое чёрная дыра?"
+
+Ответ:
+{
+  "intent": "chat",
+  "destination": null,
+  "reply": "..."
+}
+
+Если destination отсутствует,
+используй null.
+
 Не придумывай координаты.
 """
-    raw = await groq_chat(prompt, text)
+
+    raw = await groq_chat(
+        prompt,
+        text
+    )
 
     try:
+
         start = raw.find("{")
         end = raw.rfind("}") + 1
-        return json.loads(raw[start:end])
-    except Exception:
-        return {"intent": "chat", "destination": None, "reply": raw}
 
+        parsed = json.loads(
+            raw[start:end]
+        )
+
+        if parsed.get("intent") not in [
+            "route",
+            "image",
+            "chat"
+        ]:
+            parsed["intent"] = "chat"
+
+        return parsed
+
+    except Exception:
+
+        return {
+            "intent": "chat",
+            "destination": None,
+            "reply": raw
+        }
 
 @app.post("/api/assistant")
 async def assistant(
