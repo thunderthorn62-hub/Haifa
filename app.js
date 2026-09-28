@@ -1,441 +1,253 @@
 const state = {
     token: localStorage.getItem("route_ai_token") || "",
+    username: localStorage.getItem("route_ai_username") || "",
+
     map: null,
     userMarker: null,
+    accuracyCircle: null,
     routeLayer: null,
+
     recording: false,
     mediaRecorder: null,
     audioChunks: [],
+    stream: null,
+
     audioContext: null,
     analyser: null,
     animationFrame: null,
     silenceTimer: null,
-    stream: null,
-    lastLocation: null
+
+    location: null
 };
 
 const $ = (id) => document.getElementById(id);
 
-function setStatus(text) {
-    const el = $("status");
-    if (el) el.textContent = text;
+
+/* =========================
+   UI
+========================= */
+
+function showElement(id) {
+    const el = $(id);
+    if (el) el.classList.remove("hidden");
 }
 
-function showAuth(show) {
-    $("authPanel").style.display = show ? "flex" : "none";
-    $("appPanel").style.display = show ? "none" : "flex";
+function hideElement(id) {
+    const el = $(id);
+    if (el) el.classList.add("hidden");
 }
+
+function setStatus(text) {
+    const el = $("statusText");
+
+    if (el) {
+        el.textContent = text;
+    }
+}
+
+function setAuthError(text) {
+    const el = $("authError");
+
+    if (el) {
+        el.textContent = text || "";
+    }
+}
+
+function setTranscript(text) {
+    const el = $("transcript");
+
+    if (el) {
+        el.textContent = text || "";
+    }
+}
+
+function showLoginForm() {
+    hideElement("registerForm");
+    showElement("loginForm");
+    setAuthError("");
+}
+
+function showRegisterForm() {
+    hideElement("loginForm");
+    showElement("registerForm");
+    setAuthError("");
+}
+
+function showApp() {
+    hideElement("authScreen");
+    showElement("appScreen");
+
+    const usernameLabel = $("usernameLabel");
+
+    if (usernameLabel) {
+        usernameLabel.textContent =
+            state.username || "";
+    }
+
+    setTimeout(() => {
+        if (state.map) {
+            state.map.invalidateSize();
+        }
+    }, 200);
+}
+
+function showAuth() {
+    showElement("authScreen");
+    hideElement("appScreen");
+}
+
+
+/* =========================
+   API
+========================= */
 
 async function api(url, options = {}) {
-    const headers = options.headers || {};
+    const headers = {
+        ...(options.headers || {})
+    };
 
     if (state.token) {
-        headers.Authorization = `Bearer ${state.token}`;
+        headers.Authorization =
+            `Bearer ${state.token}`;
     }
 
-    if (options.body && !(options.body instanceof FormData)) {
-        headers["Content-Type"] = "application/json";
+    if (
+        options.body &&
+        !(options.body instanceof FormData)
+    ) {
+        headers["Content-Type"] =
+            "application/json";
     }
 
-    const response = await fetch(url, {
-        ...options,
-        headers
-    });
+    const response = await fetch(
+        url,
+        {
+            ...options,
+            headers
+        }
+    );
 
     let data = {};
 
     try {
         data = await response.json();
-    } catch (_) {}
+    } catch (_) {
+        data = {};
+    }
 
     if (!response.ok) {
-        throw new Error(data.detail || `HTTP ${response.status}`);
+        throw new Error(
+            data.detail ||
+            `Ошибка сервера: ${response.status}`
+        );
     }
 
     return data;
 }
 
-function initMap() {
-    state.map = L.map("map").setView([32.0853, 34.7818], 11);
 
-    L.tileLayer(
-        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-        {
-            maxZoom: 19,
-            attribution: "&copy; OpenStreetMap contributors"
-        }
-    ).addTo(state.map);
-}
+/* =========================
+   AUTH
+========================= */
 
-function setLocation(lat, lon) {
-    state.lastLocation = {
-        lat,
-        lon
-    };
+async function register() {
+    const username =
+        $("registerUsername")?.value.trim();
 
-    if (!state.userMarker) {
-        state.userMarker = L.marker([lat, lon]).addTo(state.map);
-        state.userMarker.bindPopup("Ваше местоположение");
-    } else {
-        state.userMarker.setLatLng([lat, lon]);
-    }
-}
+    const email =
+        $("registerEmail")?.value.trim();
 
-function locateUser(center = true) {
-    if (!navigator.geolocation) {
-        setStatus("Геолокация не поддерживается браузером.");
+    const password =
+        $("registerPassword")?.value;
+
+    if (!username || !email || !password) {
+        setAuthError(
+            "Заполните все поля."
+        );
         return;
     }
 
-    setStatus("Определяю ваше местоположение...");
-
-    navigator.geolocation.getCurrentPosition(
-        (position) => {
-            const lat = position.coords.latitude;
-            const lon = position.coords.longitude;
-
-            setLocation(lat, lon);
-
-            if (center) {
-                state.map.setView([lat, lon], 14);
-            }
-
-            setStatus("Местоположение найдено.");
-        },
-        (error) => {
-            setStatus(
-                "Не удалось получить местоположение: " +
-                error.message
-            );
-        },
-        {
-            enableHighAccuracy: true,
-            timeout: 15000,
-            maximumAge: 10000
-        }
-    );
-}
-
-async function geocode(place) {
-    const params = new URLSearchParams({
-        q: place,
-        format: "json",
-        limit: "1",
-        addressdetails: "1"
-    });
-
-    const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?${params.toString()}`,
-        {
-            headers: {
-                Accept: "application/json",
-                "User-Agent": "MapNavAI/1.0"
-            }
-        }
-    );
-
-    if (!response.ok) {
-        throw new Error("Ошибка геокодирования.");
-    }
-
-    const results = await response.json();
-
-    if (!results.length) {
-        throw new Error(
-            `Не удалось найти место: ${place}`
+    if (password.length < 6) {
+        setAuthError(
+            "Пароль должен содержать минимум 6 символов."
         );
-    }
-
-    return {
-        lat: Number(results[0].lat),
-        lon: Number(results[0].lon),
-        name: results[0].display_name
-    };
-}
-
-async function buildRoute(from, to) {
-    const url =
-        "https://router.project-osrm.org/route/v1/driving/" +
-        `${from.lon},${from.lat};${to.lon},${to.lat}` +
-        "?overview=full&geometries=geojson&steps=true";
-
-    const response = await fetch(url);
-
-    if (!response.ok) {
-        throw new Error("Ошибка маршрутизатора.");
-    }
-
-    const data = await response.json();
-
-    if (
-        data.code !== "Ok" ||
-        !data.routes ||
-        !data.routes.length
-    ) {
-        throw new Error("Маршрут не найден.");
-    }
-
-    return data.routes[0];
-}
-
-function drawRoute(route) {
-    if (state.routeLayer) {
-        state.map.removeLayer(state.routeLayer);
-    }
-
-    state.routeLayer = L.geoJSON(
-        route.geometry,
-        {
-            style: {
-                weight: 6,
-                opacity: 0.85
-            }
-        }
-    ).addTo(state.map);
-
-    state.map.fitBounds(
-        state.routeLayer.getBounds(),
-        {
-            padding: [30, 30]
-        }
-    );
-}
-
-function formatDistance(meters) {
-    if (meters < 1000) {
-        return `${Math.round(meters)} м`;
-    }
-
-    return `${(meters / 1000).toFixed(1)} км`;
-}
-
-function formatDuration(seconds) {
-    const minutes = Math.round(seconds / 60);
-
-    if (minutes < 60) {
-        return `${minutes} мин`;
-    }
-
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-
-    if (mins) {
-        return `${hours} ч ${mins} мин`;
-    }
-
-    return `${hours} ч`;
-}
-
-function showRouteInfo(route, destination) {
-    const info = $("routeInfo");
-
-    if (!info) return;
-
-    info.innerHTML = `
-        <strong>Маршрут построен</strong><br>
-        До: ${escapeHtml(destination)}<br>
-        Расстояние: ${formatDistance(route.distance)}<br>
-        Время в пути: ${formatDuration(route.duration)}
-    `;
-
-    info.style.display = "block";
-}
-
-function escapeHtml(value) {
-    return String(value)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
-}
-
-async function routeFromUserTo(place) {
-    if (!state.lastLocation) {
-        locateUser(false);
-
-        await new Promise((resolve, reject) => {
-            const started = Date.now();
-
-            const timer = setInterval(() => {
-                if (state.lastLocation) {
-                    clearInterval(timer);
-                    resolve();
-                } else if (Date.now() - started > 16000) {
-                    clearInterval(timer);
-                    reject(
-                        new Error(
-                            "Не удалось получить ваше местоположение."
-                        )
-                    );
-                }
-            }, 200);
-        });
-    }
-
-    setStatus(`Ищу ${place}...`);
-
-    const destination = await geocode(place);
-
-    setStatus("Строю маршрут...");
-
-    const route = await buildRoute(
-        state.lastLocation,
-        destination
-    );
-
-    drawRoute(route);
-
-    showRouteInfo(
-        route,
-        place
-    );
-
-    await saveRoute({
-        destination: place,
-        distance: route.distance,
-        duration: route.duration,
-        geometry: route.geometry
-    });
-
-    const answer =
-        `Маршрут до ${place} построен. ` +
-        `Расстояние ${formatDistance(route.distance)}, ` +
-        `примерное время в пути ${formatDuration(route.duration)}.`;
-
-    addMessage("AI", answer);
-
-    speak(answer);
-
-    setStatus("Готово.");
-}
-
-async function saveRoute(route) {
-    try {
-        await api("/api/routes", {
-            method: "POST",
-            body: JSON.stringify(route)
-        });
-    } catch (error) {
-        console.warn(
-            "Не удалось сохранить маршрут:",
-            error
-        );
-    }
-}
-
-function addMessage(author, text) {
-    const messages = $("messages");
-
-    if (!messages) return;
-
-    const item = document.createElement("div");
-
-    item.className =
-        author === "AI"
-            ? "message ai"
-            : "message user";
-
-    item.innerHTML = `
-        <strong>${escapeHtml(author)}</strong>
-        <div>${escapeHtml(text)}</div>
-    `;
-
-    messages.appendChild(item);
-
-    messages.scrollTop =
-        messages.scrollHeight;
-}
-
-function speak(text) {
-    if (!("speechSynthesis" in window)) {
         return;
     }
 
-    window.speechSynthesis.cancel();
-
-    const utterance =
-        new SpeechSynthesisUtterance(text);
-
-    utterance.lang = "ru-RU";
-    utterance.rate = 1;
-    utterance.pitch = 1;
-
-    window.speechSynthesis.speak(
-        utterance
-    );
-}
-
-async function sendChat(message) {
-    if (!message.trim()) return;
-
-    addMessage("Вы", message);
-
-    setStatus("AI думает...");
+    setAuthError("");
+    setStatus("Создаю аккаунт...");
 
     try {
         const data = await api(
-            "/api/chat",
+            "/api/register",
             {
                 method: "POST",
                 body: JSON.stringify({
-                    message,
-                    latitude:
-                        state.lastLocation?.lat ?? null,
-                    longitude:
-                        state.lastLocation?.lon ?? null
+                    username,
+                    email,
+                    password
                 })
             }
         );
 
-        const answer =
-            data.answer ||
-            data.message ||
-            "Не удалось получить ответ.";
+        state.token = data.token;
+        state.username =
+            data.username || username;
 
-        addMessage("AI", answer);
+        localStorage.setItem(
+            "route_ai_token",
+            state.token
+        );
 
-        speak(answer);
+        localStorage.setItem(
+            "route_ai_username",
+            state.username
+        );
 
-        if (data.route_to) {
-            await routeFromUserTo(
-                data.route_to
-            );
-        }
+        showApp();
 
-        setStatus("Готово.");
+        setStatus(
+            "Аккаунт создан. Определяю ваше местоположение..."
+        );
+
+        await locateUser();
+
     } catch (error) {
-        addMessage(
-            "AI",
-            "Ошибка: " + error.message
+        console.error(
+            "REGISTER ERROR:",
+            error
+        );
+
+        setAuthError(
+            error.message
         );
 
         setStatus(
-            "Произошла ошибка."
+            "Ошибка регистрации."
         );
     }
 }
 
-async function loginOrRegister(mode) {
+async function login() {
     const email =
-        $("email").value.trim();
+        $("loginEmail")?.value.trim();
 
     const password =
-        $("password").value;
+        $("loginPassword")?.value;
 
     if (!email || !password) {
-        setStatus(
+        setAuthError(
             "Введите email и пароль."
         );
-
         return;
     }
 
+    setAuthError("");
+    setStatus("Выполняю вход...");
+
     try {
         const data = await api(
-            mode === "login"
-                ? "/api/login"
-                : "/api/register",
+            "/api/login",
             {
                 method: "POST",
                 body: JSON.stringify({
@@ -445,64 +257,561 @@ async function loginOrRegister(mode) {
             }
         );
 
-        state.token =
-            data.access_token;
+        state.token = data.token;
+        state.username =
+            data.username || "";
 
         localStorage.setItem(
             "route_ai_token",
             state.token
         );
 
-        showAuth(false);
-
-        setStatus(
-            "Вы вошли в аккаунт."
+        localStorage.setItem(
+            "route_ai_username",
+            state.username
         );
 
-        locateUser();
-    } catch (error) {
+        showApp();
+
         setStatus(
+            "Вход выполнен. Определяю местоположение..."
+        );
+
+        await locateUser();
+
+    } catch (error) {
+        console.error(
+            "LOGIN ERROR:",
+            error
+        );
+
+        setAuthError(
+            error.message
+        );
+
+        setStatus(
+            "Ошибка входа."
+        );
+    }
+}
+
+
+/* =========================
+   MAP
+========================= */
+
+function initMap() {
+    const mapElement =
+        $("map");
+
+    if (!mapElement) {
+        console.error(
+            "Элемент #map не найден"
+        );
+        return;
+    }
+
+    state.map = L.map(
+        "map",
+        {
+            zoomControl: true
+        }
+    ).setView(
+        [32.0853, 34.7818],
+        11
+    );
+
+    L.tileLayer(
+        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        {
+            maxZoom: 19,
+            attribution:
+                "&copy; OpenStreetMap contributors"
+        }
+    ).addTo(state.map);
+}
+
+
+/* =========================
+   LOCATION
+========================= */
+
+function locateUser() {
+    return new Promise(
+        (resolve, reject) => {
+
+            if (!navigator.geolocation) {
+                setStatus(
+                    "Геолокация не поддерживается."
+                );
+
+                reject(
+                    new Error(
+                        "Геолокация не поддерживается"
+                    )
+                );
+
+                return;
+            }
+
+            setStatus(
+                "Определяю ваше местоположение..."
+            );
+
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+
+                    const lat =
+                        position.coords.latitude;
+
+                    const lon =
+                        position.coords.longitude;
+
+                    const accuracy =
+                        position.coords.accuracy;
+
+                    state.location = {
+                        latitude: lat,
+                        longitude: lon
+                    };
+
+                    if (!state.userMarker) {
+
+                        state.userMarker =
+                            L.marker(
+                                [lat, lon]
+                            ).addTo(
+                                state.map
+                            );
+
+                        state.userMarker.bindPopup(
+                            "Вы здесь"
+                        );
+
+                    } else {
+
+                        state.userMarker.setLatLng(
+                            [lat, lon]
+                        );
+                    }
+
+                    if (!state.accuracyCircle) {
+
+                        state.accuracyCircle =
+                            L.circle(
+                                [lat, lon],
+                                {
+                                    radius: accuracy,
+                                    weight: 1,
+                                    fillOpacity: 0.08
+                                }
+                            ).addTo(
+                                state.map
+                            );
+
+                    } else {
+
+                        state.accuracyCircle.setLatLng(
+                            [lat, lon]
+                        );
+
+                        state.accuracyCircle.setRadius(
+                            accuracy
+                        );
+                    }
+
+                    state.map.setView(
+                        [lat, lon],
+                        14
+                    );
+
+                    setStatus(
+                        "Местоположение найдено."
+                    );
+
+                    resolve(
+                        state.location
+                    );
+                },
+
+                (error) => {
+
+                    console.error(
+                        "GEOLOCATION:",
+                        error
+                    );
+
+                    let message =
+                        "Не удалось определить местоположение.";
+
+                    if (
+                        error.code ===
+                        error.PERMISSION_DENIED
+                    ) {
+                        message =
+                            "Разрешите доступ к геолокации в браузере.";
+                    }
+
+                    setStatus(
+                        message
+                    );
+
+                    reject(
+                        new Error(message)
+                    );
+                },
+
+                {
+                    enableHighAccuracy: true,
+                    timeout: 15000,
+                    maximumAge: 5000
+                }
+            );
+        }
+    );
+}
+
+
+/* =========================
+   ROUTE
+========================= */
+
+function clearRoute() {
+    if (state.routeLayer) {
+        state.map.removeLayer(
+            state.routeLayer
+        );
+
+        state.routeLayer = null;
+    }
+}
+
+function drawRoute(route) {
+    clearRoute();
+
+    if (
+        !route ||
+        !route.geometry
+    ) {
+        return;
+    }
+
+    state.routeLayer =
+        L.geoJSON(
+            route.geometry,
+            {
+                style: {
+                    weight: 6,
+                    opacity: 0.9
+                }
+            }
+        ).addTo(
+            state.map
+        );
+
+    const bounds =
+        state.routeLayer.getBounds();
+
+    if (bounds.isValid()) {
+        state.map.fitBounds(
+            bounds,
+            {
+                padding: [40, 40]
+            }
+        );
+    }
+}
+
+function formatDistance(meters) {
+    if (meters < 1000) {
+        return (
+            Math.round(meters) +
+            " м"
+        );
+    }
+
+    return (
+        (meters / 1000).toFixed(1) +
+        " км"
+    );
+}
+
+function formatDuration(seconds) {
+    const minutes =
+        Math.round(
+            seconds / 60
+        );
+
+    if (minutes < 60) {
+        return (
+            minutes +
+            " мин"
+        );
+    }
+
+    const hours =
+        Math.floor(
+            minutes / 60
+        );
+
+    const remaining =
+        minutes % 60;
+
+    if (remaining === 0) {
+        return (
+            hours +
+            " ч"
+        );
+    }
+
+    return (
+        hours +
+        " ч " +
+        remaining +
+        " мин"
+    );
+}
+
+function showRouteInfo(data) {
+    const panel =
+        $("infoPanel");
+
+    if (!panel) {
+        return;
+    }
+
+    const route =
+        data.route;
+
+    const destination =
+        data.destination;
+
+    if (!route) {
+        return;
+    }
+
+    panel.innerHTML = `
+        <div>
+            <strong>Маршрут построен</strong>
+        </div>
+
+        <div>
+            До:
+            ${escapeHtml(
+                destination?.display_name ||
+                "назначения"
+            )}
+        </div>
+
+        <div>
+            Расстояние:
+            ${formatDistance(
+                route.distance_m
+            )}
+        </div>
+
+        <div>
+            Время:
+            ${formatDuration(
+                route.duration_s
+            )}
+        </div>
+    `;
+
+    panel.classList.remove(
+        "hidden"
+    );
+}
+
+
+/* =========================
+   ASSISTANT
+========================= */
+
+async function sendToAssistant(text) {
+    if (!text.trim()) {
+        return;
+    }
+
+    setTranscript(text);
+    setStatus(
+        "AI обрабатывает запрос..."
+    );
+
+    try {
+
+        if (!state.location) {
+            await locateUser();
+        }
+
+        const data =
+            await api(
+                "/api/assistant",
+                {
+                    method: "POST",
+                    body: JSON.stringify({
+                        text,
+                        latitude:
+                            state.location?.latitude ??
+                            null,
+                        longitude:
+                            state.location?.longitude ??
+                            null
+                    })
+                }
+            );
+
+        console.log(
+            "ASSISTANT RESPONSE:",
+            data
+        );
+
+        if (data.type === "route") {
+
+            drawRoute(
+                data.route
+            );
+
+            showRouteInfo(
+                data
+            );
+
+            setTranscript(
+                data.text || ""
+            );
+
+            setStatus(
+                "Маршрут построен."
+            );
+
+            speak(
+                data.text || ""
+            );
+
+        } else {
+
+            const answer =
+                data.text || "";
+
+            setTranscript(
+                answer
+            );
+
+            setStatus(
+                "Готово."
+            );
+
+            speak(
+                answer
+            );
+        }
+
+    } catch (error) {
+
+        console.error(
+            "ASSISTANT ERROR:",
+            error
+        );
+
+        setStatus(
+            "Произошла ошибка."
+        );
+
+        setTranscript(
             error.message
         );
     }
 }
 
-function updateOrbVolume(volume) {
-    const orb = $("orb");
 
-    if (!orb) return;
+/* =========================
+   SPEECH
+========================= */
+
+function speak(text) {
+    if (
+        !text ||
+        !("speechSynthesis" in window)
+    ) {
+        return;
+    }
+
+    window.speechSynthesis.cancel();
+
+    const utterance =
+        new SpeechSynthesisUtterance(
+            text
+        );
+
+    utterance.lang =
+        "ru-RU";
+
+    utterance.rate =
+        1;
+
+    utterance.pitch =
+        1;
+
+    window.speechSynthesis.speak(
+        utterance
+    );
+}
+
+
+/* =========================
+   VOICE ORB
+========================= */
+
+function updateOrb(volume) {
+    const orb =
+        $("voiceOrb");
+
+    if (!orb) {
+        return;
+    }
 
     const level =
-        Math.min(
-            1,
-            Math.max(0, volume)
+        Math.max(
+            0,
+            Math.min(
+                1,
+                volume
+            )
         );
 
     const scale =
-        1 + level * 0.55;
+        1 +
+        level * 0.35;
 
     orb.style.transform =
         `scale(${scale})`;
 
-    orb.style.boxShadow =
-        `0 0 ${25 + level * 45}px ` +
-        `rgba(80, 170, 255, ${0.35 + level * 0.6})`;
+    const glow =
+        20 +
+        level * 50;
+
+    orb.style.filter =
+        `drop-shadow(0 0 ${glow}px rgba(80,170,255,0.8))`;
 }
 
-function stopVolumeAnimation() {
+function stopOrbAnimation() {
     if (state.animationFrame) {
+
         cancelAnimationFrame(
             state.animationFrame
         );
 
-        state.animationFrame = null;
+        state.animationFrame =
+            null;
     }
 
-    updateOrbVolume(0);
+    updateOrb(0);
 }
 
 function monitorVolume() {
-    if (!state.analyser) return;
+    if (!state.analyser) {
+        return;
+    }
 
     const buffer =
         new Uint8Array(
@@ -515,16 +824,24 @@ function monitorVolume() {
 
     let sum = 0;
 
-    for (let i = 0; i < buffer.length; i++) {
-        const value =
-            (buffer[i] - 128) / 128;
+    for (
+        let i = 0;
+        i < buffer.length;
+        i++
+    ) {
 
-        sum += value * value;
+        const value =
+            (buffer[i] - 128) /
+            128;
+
+        sum +=
+            value * value;
     }
 
     const rms =
         Math.sqrt(
-            sum / buffer.length
+            sum /
+            buffer.length
         );
 
     const volume =
@@ -533,24 +850,42 @@ function monitorVolume() {
             rms * 5
         );
 
-    updateOrbVolume(volume);
+    updateOrb(
+        volume
+    );
 
     if (state.recording) {
-        if (volume < 0.025) {
-            if (!state.silenceTimer) {
-                state.silenceTimer =
-                    setTimeout(() => {
-                        if (state.recording) {
-                            stopRecording();
-                        }
-                    }, 1700);
-            }
-        } else if (state.silenceTimer) {
-            clearTimeout(
-                state.silenceTimer
-            );
 
-            state.silenceTimer = null;
+        if (volume < 0.025) {
+
+            if (!state.silenceTimer) {
+
+                state.silenceTimer =
+                    setTimeout(
+                        () => {
+
+                            if (
+                                state.recording
+                            ) {
+                                stopRecording();
+                            }
+
+                        },
+                        1700
+                    );
+            }
+
+        } else {
+
+            if (state.silenceTimer) {
+
+                clearTimeout(
+                    state.silenceTimer
+                );
+
+                state.silenceTimer =
+                    null;
+            }
         }
     }
 
@@ -561,30 +896,47 @@ function monitorVolume() {
 }
 
 async function startRecording() {
+
     if (
         !navigator.mediaDevices ||
         !navigator.mediaDevices.getUserMedia
     ) {
+
         setStatus(
-            "Браузер не поддерживает микрофон."
+            "Микрофон не поддерживается."
         );
 
         return;
     }
 
     try {
+
         state.stream =
-            await navigator.mediaDevices.getUserMedia(
-                {
+            await navigator.mediaDevices
+                .getUserMedia({
                     audio: true
-                }
-            );
+                });
 
         state.audioChunks = [];
 
+        let mimeType =
+            "audio/webm";
+
+        if (
+            MediaRecorder.isTypeSupported(
+                "audio/webm;codecs=opus"
+            )
+        ) {
+            mimeType =
+                "audio/webm;codecs=opus";
+        }
+
         state.mediaRecorder =
             new MediaRecorder(
-                state.stream
+                state.stream,
+                {
+                    mimeType
+                }
             );
 
         state.audioContext =
@@ -612,7 +964,12 @@ async function startRecording() {
 
         state.mediaRecorder.ondataavailable =
             (event) => {
-                if (event.data.size > 0) {
+
+                if (
+                    event.data &&
+                    event.data.size > 0
+                ) {
+
                     state.audioChunks.push(
                         event.data
                     );
@@ -621,36 +978,54 @@ async function startRecording() {
 
         state.mediaRecorder.onstop =
             async () => {
+
                 const blob =
                     new Blob(
                         state.audioChunks,
                         {
                             type:
                                 state.mediaRecorder
-                                    .mimeType ||
+                                    ?.mimeType ||
                                 "audio/webm"
                         }
                     );
 
                 cleanupRecording();
 
-                await sendAudio(blob);
+                if (
+                    blob.size > 0
+                ) {
+                    await sendAudio(
+                        blob
+                    );
+                }
             };
 
-        state.recording = true;
+        state.recording =
+            true;
 
         state.mediaRecorder.start();
 
-        $("orb")?.classList.add(
-            "recording"
-        );
+        $("voiceOrb")
+            ?.classList.add(
+                "recording"
+            );
 
         setStatus(
             "Слушаю... Говорите."
         );
 
+        setTranscript("");
+
         monitorVolume();
+
     } catch (error) {
+
+        console.error(
+            "MICROPHONE ERROR:",
+            error
+        );
+
         cleanupRecording();
 
         setStatus(
@@ -661,47 +1036,46 @@ async function startRecording() {
 }
 
 function stopRecording() {
-    if (!state.recording) return;
 
-    state.recording = false;
+    if (!state.recording) {
+        return;
+    }
+
+    state.recording =
+        false;
 
     if (
         state.mediaRecorder &&
         state.mediaRecorder.state !==
             "inactive"
     ) {
+
         state.mediaRecorder.stop();
+
     } else {
+
         cleanupRecording();
     }
 
     setStatus(
-        "Обрабатываю голос..."
+        "Распознаю речь..."
     );
 }
 
 function cleanupRecording() {
     if (state.silenceTimer) {
-        clearTimeout(
-            state.silenceTimer
-        );
-
+        clearTimeout(state.silenceTimer);
         state.silenceTimer = null;
     }
 
-    stopVolumeAnimation();
+    stopOrbAnimation();
 
-    $("orb")?.classList.remove(
-        "recording"
-    );
+    $("voiceOrb")?.classList.remove("recording");
 
     if (state.stream) {
         state.stream
             .getTracks()
-            .forEach(
-                (track) =>
-                    track.stop()
-            );
+            .forEach(track => track.stop());
     }
 
     if (state.audioContext) {
@@ -716,28 +1090,30 @@ function cleanupRecording() {
     state.mediaRecorder = null;
 }
 
+
+/* =========================
+   SEND AUDIO
+========================= */
+
 async function sendAudio(blob) {
     try {
-        const formData =
-            new FormData();
+        const formData = new FormData();
 
         formData.append(
             "audio",
             blob,
-            "voice.webm"
+            "recording.webm"
         );
 
-        const data =
-            await api(
-                "/api/transcribe",
-                {
-                    method: "POST",
-                    body: formData
-                }
-            );
+        const data = await api(
+            "/api/transcribe",
+            {
+                method: "POST",
+                body: formData
+            }
+        );
 
-        const text =
-            data.text?.trim();
+        const text = data.text?.trim();
 
         if (!text) {
             setStatus(
@@ -747,33 +1123,54 @@ async function sendAudio(blob) {
             return;
         }
 
-        addMessage(
-            "Вы",
-            text
-        );
+        setTranscript(text);
 
-        await sendChat(text);
+        await sendToAssistant(text);
+
     } catch (error) {
-        addMessage(
-            "AI",
-            "Ошибка распознавания: " +
-            error.message
+        console.error(
+            "TRANSCRIBE ERROR:",
+            error
         );
 
         setStatus(
-            "Ошибка обработки голоса."
+            "Ошибка распознавания речи."
+        );
+
+        setTranscript(
+            error.message
         );
     }
 }
 
+
+/* =========================
+   EVENTS
+========================= */
+
 function setupEvents() {
+
+    $("showRegister")
+        ?.addEventListener(
+            "click",
+            () => {
+                showRegisterForm();
+            }
+        );
+
+    $("showLogin")
+        ?.addEventListener(
+            "click",
+            () => {
+                showLoginForm();
+            }
+        );
+
     $("loginButton")
         ?.addEventListener(
             "click",
             () => {
-                loginOrRegister(
-                    "login"
-                );
+                login();
             }
         );
 
@@ -781,97 +1178,149 @@ function setupEvents() {
         ?.addEventListener(
             "click",
             () => {
-                loginOrRegister(
-                    "register"
-                );
+                register();
             }
         );
 
-    $("locateButton")
+    $("voiceOrb")
         ?.addEventListener(
             "click",
             () => {
-                locateUser();
-            }
-        );
 
-    $("sendButton")
-        ?.addEventListener(
-            "click",
-            () => {
-                const input =
-                    $("messageInput");
-
-                if (!input) return;
-
-                const text =
-                    input.value.trim();
-
-                input.value = "";
-
-                sendChat(text);
-            }
-        );
-
-    $("messageInput")
-        ?.addEventListener(
-            "keydown",
-            (event) => {
-                if (
-                    event.key ===
-                    "Enter"
-                ) {
-                    event.preventDefault();
-
-                    $("sendButton")
-                        ?.click();
-                }
-            }
-        );
-
-    $("orb")
-        ?.addEventListener(
-            "click",
-            () => {
                 if (state.recording) {
                     stopRecording();
                 } else {
                     startRecording();
                 }
+
             }
         );
 
-    $("logoutButton")
+    $("loginPassword")
         ?.addEventListener(
-            "click",
-            () => {
-                state.token = "";
+            "keydown",
+            (event) => {
 
-                localStorage.removeItem(
-                    "route_ai_token"
-                );
+                if (
+                    event.key === "Enter"
+                ) {
+                    login();
+                }
 
-                showAuth(true);
+            }
+        );
 
-                setStatus(
-                    "Вы вышли из аккаунта."
-                );
+    $("registerPassword")
+        ?.addEventListener(
+            "keydown",
+            (event) => {
+
+                if (
+                    event.key === "Enter"
+                ) {
+                    register();
+                }
+
             }
         );
 }
 
+
+/* =========================
+   HTML ESCAPE
+========================= */
+
+function escapeHtml(value) {
+
+    return String(value)
+        .replaceAll(
+            "&",
+            "&amp;"
+        )
+        .replaceAll(
+            "<",
+            "&lt;"
+        )
+        .replaceAll(
+            ">",
+            "&gt;"
+        )
+        .replaceAll(
+            '"',
+            "&quot;"
+        )
+        .replaceAll(
+            "'",
+            "&#039;"
+        );
+}
+
+
+/* =========================
+   START
+========================= */
+
 document.addEventListener(
     "DOMContentLoaded",
-    () => {
+    async () => {
+
         initMap();
 
         setupEvents();
 
         if (state.token) {
-            showAuth(false);
-            locateUser();
+
+            try {
+
+                const me = await api(
+                    "/api/me"
+                );
+
+                state.username =
+                    me.username ||
+                    state.username;
+
+                localStorage.setItem(
+                    "route_ai_username",
+                    state.username
+                );
+
+                showApp();
+
+                setStatus(
+                    "Определяю ваше местоположение..."
+                );
+
+                await locateUser();
+
+            } catch (error) {
+
+                console.warn(
+                    "Saved session invalid:",
+                    error
+                );
+
+                state.token = "";
+                state.username = "";
+
+                localStorage.removeItem(
+                    "route_ai_token"
+                );
+
+                localStorage.removeItem(
+                    "route_ai_username"
+                );
+
+                showAuth();
+
+                showLoginForm();
+            }
+
         } else {
-            showAuth(true);
+
+            showAuth();
+
+            showLoginForm();
         }
     }
 );
