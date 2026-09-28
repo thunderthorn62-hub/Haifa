@@ -1359,3 +1359,22 @@ function showGeneratedImage(imageData) {
 
     modal.classList.add("active");
 }
+
+function setupImageModal() {
+    const modal = document.getElementById("imageModal");
+    const closeButton = document.getElementById("closeImageModal");
+
+    if (!modal || !closeButton) {
+        return;
+    }
+
+    closeButton.addEventListener("click", () => {
+        modal.classList.remove("active");
+    });
+
+    modal.addEventListener("click", (event) => {
+        if (event.target === modal) {
+            modal.classList.remove("active");
+        }
+    });
+}
