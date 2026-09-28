@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Route AI</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div id="authScreen" class="screen">
+  <div class="auth-card">
+    <div class="logo">Route<span>AI</span></div>
+    <p class="subtitle">Голосовой помощник для маршрутов</p>
+
+    <div id="loginForm">
+      <input id="loginEmail" type="email" placeholder="Email">
+      <input id="loginPassword" type="password" placeholder="Пароль">
+      <button id="loginButton" class="primary">Войти</button>
+      <button id="showRegister" class="link-button">Создать аккаунт</button>
+    </div>
+
+    <div id="registerForm" class="hidden">
+      <input id="registerUsername" placeholder="Имя пользователя">
+      <input id="registerEmail" type="email" placeholder="Email">
+      <input id="registerPassword" type="password" placeholder="Пароль">
+      <button id="registerButton" class="primary">Зарегистрироваться</button>
+      <button id="showLogin" class="link-button">У меня уже есть аккаунт</button>
+    </div>
+
+    <div id="authError" class="error"></div>
+  </div>
+</div>
+
+<div id="appScreen" class="hidden">
+  <div id="map"></div>
+
+  <div class="topbar">
+    <div class="brand">Route<span>AI</span></div>
+    <div id="usernameLabel"></div>
+  </div>
+
+  <div id="infoPanel" class="info-panel hidden"></div>
+
+  <div id="imagePanel" class="image-panel hidden">
+    <img id="generatedImage" alt="Generated">
+    <div id="imageDescription"></div>
+  </div>
+
+  <div class="assistant-area">
+    <div id="statusText">Нажмите на шар и говорите</div>
+
+    <button id="voiceOrb" class="voice-orb" aria-label="Голосовой помощник">
+      <span class="orb-core"></span>
+      <span class="orb-ring ring1"></span>
+      <span class="orb-ring ring2"></span>
+    </button>
+
+    <div id="transcript" class="transcript"></div>
+  </div>
+
+  <div class="map-attribution-note">
+    © OpenStreetMap contributors
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
