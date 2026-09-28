@@ -629,82 +629,103 @@ function showRouteInfo(data) {
 ========================= */
 
 async function sendToAssistant(text) {
-    if (!text.trim()) {
+    text = text?.trim();
+
+    if (!text) {
         return;
     }
 
-    setTranscript(text);
-    setStatus(
-        "AI обрабатывает запрос..."
-    );
-
     try {
+        setStatus("Думаю...");
 
-        if (!state.location) {
-            await locateUser();
+        const data = await api(
+            "/api/assistant",
+            {
+                method: "POST",
+                body: JSON.stringify({
+                    text: text,
+                    latitude: state.location?.latitude ?? null,
+                    longitude: state.location?.longitude ?? null
+                })
+            }
+        );
+
+        // =========================================
+        // ОБЫЧНЫЙ РАЗГОВОР
+        // =========================================
+
+        if (data.type === "chat") {
+            const reply =
+                data.text ||
+                "Не удалось получить ответ.";
+
+            setTranscript(reply);
+            setStatus("Готово");
+
+            speak(reply);
+
+            return;
         }
 
-        const data =
-            await api(
-                "/api/assistant",
-                {
-                    method: "POST",
-                    body: JSON.stringify({
-                        text,
-                        latitude:
-                            state.location?.latitude ??
-                            null,
-                        longitude:
-                            state.location?.longitude ??
-                            null
-                    })
-                }
-            );
-
-        console.log(
-            "ASSISTANT RESPONSE:",
-            data
-        );
+        // =========================================
+        // НАВИГАЦИЯ
+        // =========================================
 
         if (data.type === "route") {
 
-            drawRoute(
-                data.route
-            );
+            if (data.route) {
+                drawRoute(data.route);
+            }
 
-            showRouteInfo(
-                data
-            );
+            const reply =
+                data.text ||
+                "Маршрут построен.";
 
-            setTranscript(
-                data.text || ""
-            );
+            setTranscript(reply);
+            setStatus("Маршрут построен");
 
-            setStatus(
-                "Маршрут построен."
-            );
+            showRouteInfo(data);
 
-            speak(
-                data.text || ""
-            );
+            speak(reply);
 
-        } else {
-
-            const answer =
-                data.text || "";
-
-            setTranscript(
-                answer
-            );
-
-            setStatus(
-                "Готово."
-            );
-
-            speak(
-                answer
-            );
+            return;
         }
+
+        // =========================================
+        // ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЯ
+        // =========================================
+
+        if (data.type === "image") {
+
+            const reply =
+                data.text ||
+                "Готово! Я создал изображение.";
+
+            setTranscript(reply);
+            setStatus("Изображение создано");
+
+            if (data.image) {
+                showGeneratedImage(data.image);
+            }
+
+            speak(reply);
+
+            return;
+        }
+
+        // =========================================
+        // НЕИЗВЕСТНЫЙ ТИП ОТВЕТА
+        // =========================================
+
+        const reply =
+            data.text ||
+            data.message ||
+            "Я получил ответ, но не смог его обработать.";
+
+        setTranscript(reply);
+        setStatus("Готово");
+
+        speak(reply);
 
     } catch (error) {
 
@@ -713,16 +734,14 @@ async function sendToAssistant(text) {
             error
         );
 
-        setStatus(
-            "Произошла ошибка."
-        );
+        setStatus("Ошибка");
 
         setTranscript(
-            error.message
+            error.message ||
+            "Произошла ошибка."
         );
     }
 }
-
 
 /* =========================
    SPEECH
