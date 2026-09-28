@@ -13,14 +13,17 @@ from pydantic import BaseModel, Field
 from pymongo import MongoClient
 from jose import jwt
 
+import base64
+import requests
+
 MONGODB_URI = os.getenv("MONGODB_URI")
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-render")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
 CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
 
-if not MONGODB_URI:
-    raise RuntimeError("MONGODB_URI is not configured")
+GROQ_MODEL = "openai/gpt-oss-120b"
+IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell"
 
 app = FastAPI(title="AI Route Assistant")
 
@@ -254,6 +257,40 @@ async def build_route(lat1: float, lon1: float, lat2: float, lon2: float):
         ],
     }
 
+def generate_image(prompt: str):
+    url = (
+        f"https://api.cloudflare.com/client/v4/accounts/"
+        f"{CLOUDFLARE_ACCOUNT_ID}/ai/run/{IMAGE_MODEL}"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(
+        url,
+        headers=headers,
+        json={
+            "prompt": prompt,
+            "steps": 4
+        },
+        timeout=120
+    )
+
+    if not response.ok:
+        raise RuntimeError(
+            f"Cloudflare error: {response.text}"
+        )
+
+    result = response.json()
+
+    image_base64 = result["result"]["image"]
+
+    return (
+        "data:image/jpeg;base64,"
+        + image_base64
+    )
 
 async def parse_command(text: str):
     prompt = """
@@ -281,20 +318,205 @@ async def parse_command(text: str):
 
 
 @app.post("/api/assistant")
-async def assistant(data: AssistantRequest, authorization: Optional[str] = Header(None)):
+async def assistant(
+    data: AssistantRequest,
+    authorization: Optional[str] = Header(None)
+):
     user = get_user(authorization)
 
-    command = await parse_command(data.text)
+    text = data.text.strip()
 
-    if command.get("intent") == "route":
-        if data.latitude is None or data.longitude is None:
-            raise HTTPException(400, "Нужно разрешение на геолокацию")
+    if not text:
+        raise HTTPException(
+            400,
+            "Пустой запрос"
+        )
 
-        destination = command.get("destination")
+    # =========================================================
+    # 1. Определяем намерение пользователя
+    # =========================================================
+
+    command = await parse_command(text)
+
+    intent = command.get("intent")
+
+    # =========================================================
+    # 2. ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЯ
+    # =========================================================
+
+    if intent == "image":
+
+        if not CLOUDFLARE_ACCOUNT_ID:
+            raise HTTPException(
+                500,
+                "CLOUDFLARE_ACCOUNT_ID не настроен"
+            )
+
+        if not CLOUDFLARE_API_TOKEN:
+            raise HTTPException(
+                500,
+                "CLOUDFLARE_API_TOKEN не настроен"
+            )
+
+        try:
+
+            # Groq превращает запрос пользователя
+            # в подробный prompt для генератора изображения.
+
+            image_prompt = await groq_chat(
+                """
+Ты профессиональный prompt-инженер
+для генерации изображений.
+
+Преобразуй запрос пользователя в подробный
+англоязычный prompt для модели генерации изображений.
+
+Учитывай:
+- главный объект;
+- окружение;
+- освещение;
+- композицию;
+- перспективу;
+- атмосферу;
+- стиль;
+- цвета;
+- уровень детализации.
+
+Не добавляй ничего, чего пользователь
+не просил, если это меняет смысл изображения.
+
+Верни ТОЛЬКО готовый prompt.
+Без пояснений.
+Без кавычек.
+""",
+                text
+            )
+
+            cloudflare_url = (
+                f"https://api.cloudflare.com/client/v4/"
+                f"accounts/{CLOUDFLARE_ACCOUNT_ID}/"
+                f"ai/run/@cf/black-forest-labs/flux-1-schnell"
+            )
+
+            headers = {
+                "Authorization": (
+                    f"Bearer {CLOUDFLARE_API_TOKEN}"
+                ),
+                "Content-Type": "application/json",
+            }
+
+            payload = {
+                "prompt": image_prompt,
+                "steps": 4,
+            }
+
+            async with httpx.AsyncClient(
+                timeout=120
+            ) as client:
+
+                response = await client.post(
+                    cloudflare_url,
+                    headers=headers,
+                    json=payload,
+                )
+
+            if response.status_code >= 400:
+
+                print(
+                    "Cloudflare error:",
+                    response.text[:1000]
+                )
+
+                raise HTTPException(
+                    502,
+                    "Ошибка генерации изображения"
+                )
+
+            result = response.json()
+
+            image_base64 = (
+                result
+                .get("result", {})
+                .get("image")
+            )
+
+            if not image_base64:
+                print(
+                    "Cloudflare response:",
+                    result
+                )
+
+                raise HTTPException(
+                    502,
+                    "Cloudflare не вернул изображение"
+                )
+
+            image_data = (
+                "data:image/jpeg;base64,"
+                + image_base64
+            )
+
+            reply = "Готово! Я создал изображение."
+
+            messages.insert_one({
+                "user_id": user["_id"],
+                "type": "image",
+                "user_text": text,
+                "assistant_text": reply,
+                "image_prompt": image_prompt,
+                "created_at": datetime.now(timezone.utc),
+            })
+
+            return {
+                "type": "image",
+                "text": reply,
+                "image": image_data,
+                "prompt": image_prompt,
+            }
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+
+            print(
+                "IMAGE GENERATION ERROR:",
+                repr(e)
+            )
+
+            raise HTTPException(
+                500,
+                f"Ошибка генерации изображения: {str(e)}"
+            )
+
+    # =========================================================
+    # 3. НАВИГАЦИЯ
+    # =========================================================
+
+    if intent == "route":
+
+        if (
+            data.latitude is None
+            or data.longitude is None
+        ):
+            raise HTTPException(
+                400,
+                "Нужно разрешение на геолокацию"
+            )
+
+        destination = command.get(
+            "destination"
+        )
+
         if not destination:
-            raise HTTPException(400, "Не удалось определить пункт назначения")
+            raise HTTPException(
+                400,
+                "Не удалось определить пункт назначения"
+            )
 
-        target = await geocode(destination)
+        target = await geocode(
+            destination
+        )
 
         route = await build_route(
             data.latitude,
@@ -322,17 +544,21 @@ async def assistant(data: AssistantRequest, authorization: Optional[str] = Heade
         })
 
         km = route["distance_m"] / 1000
-        minutes = round(route["duration_s"] / 60)
+        minutes = round(
+            route["duration_s"] / 60
+        )
 
         reply = (
-            f"Маршрут до {target['display_name']} построен. "
-            f"Расстояние примерно {km:.1f} км, время в пути около {minutes} минут."
+            f"Маршрут до "
+            f"{target['display_name']} построен. "
+            f"Расстояние примерно {km:.1f} км, "
+            f"время в пути около {minutes} минут."
         )
 
         messages.insert_one({
             "user_id": user["_id"],
             "type": "route",
-            "user_text": data.text,
+            "user_text": text,
             "assistant_text": reply,
             "created_at": datetime.now(timezone.utc),
         })
@@ -344,22 +570,46 @@ async def assistant(data: AssistantRequest, authorization: Optional[str] = Heade
             "destination": target,
         }
 
+    # =========================================================
+    # 4. ОБЫЧНЫЙ РАЗГОВОР
+    # =========================================================
+
     reply = await groq_chat(
-        "Ты дружелюбный голосовой помощник по навигации. "
-        "Отвечай кратко, понятно и на языке пользователя.",
-        data.text,
+        """
+Ты дружелюбный универсальный голосовой
+AI-помощник.
+
+Пользователь может:
+- задавать обычные вопросы;
+- разговаривать с тобой;
+- просить объяснить что-либо;
+- спрашивать о странах, городах, технологиях,
+  истории, науке и других темах.
+
+Отвечай естественно, кратко и понятно.
+Используй язык пользователя.
+
+Не говори, что ты навигационный помощник,
+если вопрос не связан с навигацией.
+
+Если пользователь просто разговаривает,
+поддерживай обычный разговор.
+""",
+        text
     )
 
     messages.insert_one({
         "user_id": user["_id"],
         "type": "chat",
-        "user_text": data.text,
+        "user_text": text,
         "assistant_text": reply,
         "created_at": datetime.now(timezone.utc),
     })
 
-    return {"type": "chat", "text": reply}
-
+    return {
+        "type": "chat",
+        "text": reply
+    }
 
 @app.post("/api/transcribe")
 async def transcribe(
