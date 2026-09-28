@@ -299,3 +299,88 @@ button {
         transform: translateY(0) scale(1);
     }
 }
+
+.image-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+
+    display: none;
+    align-items: center;
+    justify-content: center;
+
+    padding: 20px;
+
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(8px);
+}
+
+.image-modal.active {
+    display: flex;
+}
+
+.image-modal-content {
+    position: relative;
+
+    width: min(900px, 95vw);
+    max-height: 90vh;
+
+    padding: 14px;
+
+    background: rgba(20, 25, 35, 0.96);
+    border-radius: 24px;
+
+    box-shadow: 0 20px 80px rgba(0, 0, 0, 0.5);
+
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+#generatedImage {
+    display: block;
+
+    max-width: 100%;
+    max-height: 78vh;
+
+    object-fit: contain;
+
+    border-radius: 16px;
+}
+
+.image-modal-close {
+    position: absolute;
+
+    top: 10px;
+    right: 10px;
+
+    width: 42px;
+    height: 42px;
+
+    border: none;
+    border-radius: 50%;
+
+    background: rgba(0, 0, 0, 0.65);
+    color: white;
+
+    font-size: 30px;
+    line-height: 38px;
+
+    cursor: pointer;
+
+    z-index: 2;
+}
+
+.image-modal-close:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+#imageModalCaption {
+    margin-top: 10px;
+
+    color: white;
+    font-size: 14px;
+    opacity: 0.75;
+
+    text-align: center;
+}
