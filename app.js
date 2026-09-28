@@ -1345,35 +1345,17 @@ document.addEventListener(
 );
 
 function showGeneratedImage(imageData) {
-    if (!imageData) {
+    if (!imageData) return;
+
+    const modal = document.getElementById("imageModal");
+    const image = document.getElementById("generatedImage");
+
+    if (!modal || !image) {
+        console.error("Image modal elements not found");
         return;
     }
 
-    const oldImage =
-        document.getElementById("generatedImage");
-
-    if (oldImage) {
-        oldImage.remove();
-    }
-
-    const image = document.createElement("img");
-
-    image.id = "generatedImage";
     image.src = imageData;
-    image.alt = "Сгенерированное изображение";
 
-    image.style.width = "100%";
-    image.style.maxWidth = "700px";
-    image.style.borderRadius = "20px";
-    image.style.display = "block";
-    image.style.margin = "20px auto";
-    image.style.boxShadow =
-        "0 10px 40px rgba(0,0,0,0.25)";
-
-    const appScreen =
-        document.getElementById("appScreen");
-
-    if (appScreen) {
-        appScreen.appendChild(image);
-    }
+    modal.classList.add("active");
 }
