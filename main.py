@@ -156,7 +156,7 @@ async def groq_chat(system: str, user_text: str):
         raise HTTPException(500, "GROQ_API_KEY не настроен")
 
     body = {
-        "model": "llama-3.3-70b-versatile",
+        "model": "openai/gpt-oss-120b",
         "temperature": 0.15,
         "messages": [
             {"role": "system", "content": system},
